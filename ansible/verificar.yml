@@ -1,0 +1,41 @@
+# Comprueba que todas las máquinas del grupo docker tienen lo mismo y que los servicios responden.
+# Uso:  ansible-playbook verificar.yml
+- name: Verificar la infraestructura en todas las máquinas
+  hosts: docker
+  gather_facts: true
+
+  tasks:
+    - name: Versiones de Docker y Compose
+      ansible.builtin.shell: |
+        docker --version | cut -d' ' -f3 | tr -d ,
+        docker compose version --short
+      register: versiones
+      changed_when: false
+
+    - name: Estado de los contenedores del proyecto
+      ansible.builtin.command: docker compose -p infra ps --format '{{ "{{" }}.Service{{ "}}" }}={{ "{{" }}.State{{ "}}" }}/{{ "{{" }}.Health{{ "}}" }}'
+      register: contenedores
+      changed_when: false
+
+    - name: Probar que cada servicio responde de verdad
+      ansible.builtin.shell: |
+        docker exec postgres pg_isready -q && echo "postgres=responde" || echo "postgres=NO"
+        docker exec mongodb mongosh --quiet --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q 1 && echo "mongodb=responde" || echo "mongodb=NO"
+        curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$(docker port mailpit 8025 | head -1 | cut -d: -f2) | grep -qE '200|401' && echo "mailpit=responde" || echo "mailpit=NO"
+        curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$(docker port rustfs 9000 | head -1 | cut -d: -f2)/health | grep -qE '200|403' && echo "rustfs=responde" || echo "rustfs=NO"
+      register: pruebas
+      changed_when: false
+
+    - name: Comprobar que ningún puerto de los servicios está abierto a la red
+      ansible.builtin.shell: docker ps --format '{{ "{{" }}.Ports{{ "}}" }}' | tr ',' '\n' | grep -E '0\.0\.0\.0|:::' || true
+      register: expuestos
+      changed_when: false
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg:
+          - "Sistema: {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_architecture }})"
+          - "Docker {{ versiones.stdout_lines[0] }} · Compose {{ versiones.stdout_lines[1] }}"
+          - "Contenedores: {{ contenedores.stdout_lines | join(', ') }}"
+          - "Pruebas: {{ pruebas.stdout_lines | join(', ') }}"
+          - "Puertos abiertos a la red: {{ expuestos.stdout_lines | join(', ') if expuestos.stdout_lines else 'ninguno' }}"

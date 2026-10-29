@@ -1,0 +1,5 @@
+# Copia este archivo como terraform.tfvars y pon tu proyecto.
+project_id = "mi-proyecto-123456"
+
+# Obligatorio: solo tu IP puede entrar por SSH (la ves con: curl -s ifconfig.me)
+ssh_source_ranges = ["203.0.113.10/32"]

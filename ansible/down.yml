@@ -1,0 +1,70 @@
+# Baja los servicios de docker-compose.yml (solo el proyecto infra).
+# Uso:
+#   ansible-playbook down.yml                      # borra contenedores y red, conserva los datos
+#   ansible-playbook down.yml -e modo=stop         # solo para los contenedores
+#   ansible-playbook down.yml -e borrar_datos=true # borra también los volúmenes (pide escribir BORRAR)
+- name: Bajar la infraestructura con Docker Compose
+  hosts: docker
+  gather_facts: false
+
+  vars:
+    project_dir: "{{ playbook_dir }}"
+    project_name: infra
+    modo: down
+    borrar_datos: false
+
+  tasks:
+    - name: Comprobar que el modo es válido
+      ansible.builtin.assert:
+        that: modo in ['down', 'stop']
+        fail_msg: "modo debe ser 'down' o 'stop' (recibido: {{ modo }})"
+        quiet: true
+
+    - name: Comprobar que borrar_datos no se combina con modo=stop
+      ansible.builtin.assert:
+        that: not (borrar_datos | bool and modo == 'stop')
+        fail_msg: "borrar_datos=true solo funciona con modo=down"
+        quiet: true
+
+    - name: Comprobar que existe el .env
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/.env"
+      register: env_file
+
+    - name: Parar si falta el .env
+      ansible.builtin.assert:
+        that: env_file.stat.exists
+        fail_msg: "No existe {{ project_dir }}/.env; Compose lo necesita para leer docker-compose.yml"
+        quiet: true
+
+    - name: Pedir confirmación para borrar los datos
+      ansible.builtin.pause:
+        prompt: >-
+          Se borrarán los volúmenes de {{ project_name }} (Mongo, Postgres, RustFS) y TODOS sus datos.
+          Escribe BORRAR para continuar
+      register: confirmacion
+      when: borrar_datos | bool
+
+    - name: Parar si no se escribió BORRAR
+      ansible.builtin.assert:
+        that: (confirmacion.user_input | default('')) == 'BORRAR'
+        fail_msg: "Cancelado: no se borró nada"
+        quiet: true
+      when: borrar_datos | bool
+
+    - name: Bajar los servicios
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_dir }}"
+        project_name: "{{ project_name }}"
+        state: "{{ 'stopped' if modo == 'stop' else 'absent' }}"
+        remove_volumes: "{{ borrar_datos | bool }}"
+
+    - name: Ver qué contenedores siguen en marcha
+      ansible.builtin.command: docker ps --format {% raw %}'{{.Names}}'{% endraw %}
+      register: running
+      changed_when: false
+      check_mode: false
+
+    - name: Contenedores que siguen en marcha
+      ansible.builtin.debug:
+        var: running.stdout_lines

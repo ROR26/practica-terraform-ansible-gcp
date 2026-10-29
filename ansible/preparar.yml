@@ -1,0 +1,58 @@
+# Deja una máquina remota lista para up.yml: Docker y los archivos del proyecto.
+# Hace lo mismo que install-docker.sh, pero desde aquí y en cualquier máquina del inventario.
+# Uso:  ansible-playbook preparar.yml            (por defecto, el grupo gcp)
+#       ansible-playbook preparar.yml -e destino=otro_grupo
+- name: Preparar una máquina remota para la infraestructura
+  hosts: "{{ destino | default('gcp') }}"
+  become: true
+
+  tasks:
+    - name: Esperar a que termine el primer arranque (apt upgrade de Terraform)
+      ansible.builtin.wait_for:
+        path: /var/lib/primer-arranque-hecho
+        timeout: 900
+
+    - name: Instalar Docker y el plugin Compose (los mismos paquetes que la VM local)
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Arrancar Docker y activarlo al inicio
+      ansible.builtin.systemd_service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Dejar usar Docker sin sudo
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Volver a conectar para que el grupo docker tenga efecto
+      ansible.builtin.meta: reset_connection
+
+    - name: Crear la carpeta del proyecto
+      ansible.builtin.file:
+        path: "{{ infra_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0755"
+
+    - name: Copiar docker-compose.yml
+      ansible.builtin.copy:
+        src: docker-compose.yml
+        dest: "{{ infra_dir }}/docker-compose.yml"
+        owner: "{{ ansible_user }}"
+        mode: "0644"
+
+    - name: Copiar el .env (secreto, solo lo lee el dueño)
+      ansible.builtin.copy:
+        src: .env
+        dest: "{{ infra_dir }}/.env"
+        owner: "{{ ansible_user }}"
+        mode: "0600"
+      no_log: true

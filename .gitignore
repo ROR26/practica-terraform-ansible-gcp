@@ -1,0 +1,12 @@
+# Secretos: nunca a git
+.env
+.env.*
+!.env.example
+terraform/terraform.tfvars
+
+# Estado y artefactos de Terraform (el estado puede contener datos sensibles)
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/tfplan
+crash.log
